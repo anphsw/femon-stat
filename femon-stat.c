@@ -3,6 +3,8 @@
  * Copyright (C) 2003 convergence GmbH
  * Johannes Stezenbach <js@convergence.de>
  *
+ * Statistics mode added by [anp/hsw]
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
