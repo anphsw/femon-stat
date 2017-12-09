@@ -1,15 +1,8 @@
-# Makefile for linuxtv.org dvb-apps/util/femon
+TARGET=femon
 
-binaries = femon
+CFLAGS=-O2 -Wall -ldvbapi -s
 
-inst_bin = $(binaries)
+$(TARGET):
 
-CPPFLAGS += -I../../lib
-LDFLAGS  += -L../../lib/libdvbapi
-LDLIBS   += -ldvbapi
-
-.PHONY: all
-
-all: $(binaries)
-
-include ../../Make.rules
+clean:
+	$(RM) $(TARGET)

@@ -35,7 +35,7 @@
 #include <stdint.h>
 #include <sys/time.h>
 
-#include <libdvbapi/dvbfe.h>
+#include "dvbfe.h"
 
 #define FE_STATUS_PARAMS (DVBFE_INFO_LOCKSTATUS|DVBFE_INFO_SIGNAL_STRENGTH|DVBFE_INFO_BER|DVBFE_INFO_SNR|DVBFE_INFO_UNCORRECTED_BLOCKS)
 
@@ -48,11 +48,17 @@ static char *usage_str =
     "                 machine but. The user has to be root.\n"
     "     -a number : use given adapter (default 0)\n"
     "     -f number : use given frontend (default 0)\n"
-    "     -c number : samples to take (default 0 = infinite)\n\n";
+    "     -c number : samples to take (default 0 = infinite, for statistic mode: default = 100)\n"
+    "     -s        : statistic mode, prints summary after (-c) samples read\n\n";
 
 int sleep_time=1000000;
 int acoustical_mode=0;
+int statistic_mode=0;
 int remote=0;
+unsigned long stat_lock = 0, stat_snr = 0, sum_ber = 0, stat_str = 0, sum_unc = 0;
+unsigned long min_snr = 0xffff, min_str = 0xffff, max_snr = 0, max_str = 0, max_ber = 0, max_unc = 0;
+
+struct dvbfe_info fe_info;
 
 static void usage(void)
 {
@@ -64,9 +70,13 @@ static void usage(void)
 static
 int check_frontend (struct dvbfe_handle *fe, int human_readable, unsigned int count)
 {
-	struct dvbfe_info fe_info;
 	unsigned int samples = 0;
 	FILE *ttyFile=NULL;
+
+	if(statistic_mode && !count) {
+	    count = 100;
+	    printf("Assuming count = 100 for statistic mode!\n");
+	}
 	
 	// We dont write the "beep"-codes to stdout but to /dev/tty1.
 	// This is neccessary for Thin-Client-Systems or Streaming-Boxes
@@ -93,10 +103,8 @@ int check_frontend (struct dvbfe_handle *fe, int human_readable, unsigned int co
 			fprintf(stderr, "Problem retrieving frontend information: %m\n");
 		}
 
-
-
 		if (human_readable) {
-                       printf ("status %c%c%c%c%c | signal %3u%% | snr %3u%% | ber %d | unc %d | ",
+                       printf ("status %c%c%c%c%c | signal %3u%% | snr %3u%% | ber %u | unc %u | ",
 				fe_info.signal ? 'S' : ' ',
 				fe_info.carrier ? 'C' : ' ',
 				fe_info.viterbi ? 'V' : ' ',
@@ -119,9 +127,26 @@ int check_frontend (struct dvbfe_handle *fe, int human_readable, unsigned int co
 				fe_info.ucblocks);
 		}
 
-		if (fe_info.lock)
-			printf("FE_HAS_LOCK");
+		if(statistic_mode)
+		{
+			stat_snr+=fe_info.snr;
+			stat_str+=fe_info.signal_strength;
+			sum_ber+=fe_info.ber;
+			sum_unc+=fe_info.ucblocks;
 
+			if (fe_info.snr > max_snr) max_snr = fe_info.snr;
+			if (fe_info.snr < min_snr) min_snr = fe_info.snr;
+			if (fe_info.signal_strength > max_str) max_str = fe_info.signal_strength;
+			if (fe_info.signal_strength < min_str) min_str = fe_info.signal_strength;
+			if (fe_info.ber > max_ber) max_ber = fe_info.ber;
+			if (fe_info.ucblocks > max_unc) max_unc = fe_info.ucblocks;
+		}
+
+		if (fe_info.lock)
+		{
+			printf("FE_HAS_LOCK");
+			if(statistic_mode) stat_lock++;
+		}
 		// create beep if acoustical_mode enabled
 		if(acoustical_mode)
 		{
@@ -136,6 +161,21 @@ int check_frontend (struct dvbfe_handle *fe, int human_readable, unsigned int co
 		usleep(sleep_time);
 		samples++;
 	} while ((!count) || (count-samples));
+
+	if(statistic_mode && count)
+	{
+	    if (human_readable) {
+		printf ("stat total   | sigavg %3lu%% | snravg %3lu%% | bermax %8lu | uncmax %8lu | locktime %lu%%\n",
+		    (stat_str * 100) / (samples * 0xffff) , (stat_snr * 100) / (samples * 0xffff), max_ber, max_unc, stat_lock * 100 / samples);
+		printf ("stat min/max | sigmin %3lu%% | sigmax %3lu%% | snrmin     %3lu%% | snrmax     %3lu%%\n",
+		    (min_str * 100) / 0xffff, (max_str * 100) / 0xffff, (min_snr * 100) / 0xffff, (max_snr * 100) / 0xffff);
+	    } else {
+		printf ("stat total   | sigavg %04lx | snravg %04lx | bersum %8lx | uncsum %8lx | lockcount %lu\n",
+		    stat_str / samples, stat_snr / samples, sum_ber, sum_unc, stat_lock);
+		printf ("stat min/max | sigmin %04lx | sigmax %04lx | snrmin     %04lx | snrmax     %04lx\n",
+		    min_str, max_str, min_snr, max_snr);
+	    }
+	}
 	
 	if(ttyFile)
 	    fclose(ttyFile);
@@ -149,7 +189,6 @@ int do_mon(unsigned int adapter, unsigned int frontend, int human_readable, unsi
 {
 	int result;
 	struct dvbfe_handle *fe;
-	struct dvbfe_info fe_info;
 	char *fe_type = "UNKNOWN";
 
 	fe = dvbfe_open(adapter, frontend, 1);
@@ -188,7 +227,7 @@ int main(int argc, char *argv[])
 	int human_readable = 0;
 	int opt;
 
-       while ((opt = getopt(argc, argv, "rAHa:f:c:")) != -1) {
+       while ((opt = getopt(argc, argv, "rAHsa:f:c:")) != -1) {
 		switch (opt)
 		{
 		default:
@@ -205,6 +244,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'H':
 			human_readable = 1;
+			break;
+		case 's':
+			statistic_mode = 1;
 			break;
 		case 'A':
 			// Acoustical mode: we have to reduce the delay between
